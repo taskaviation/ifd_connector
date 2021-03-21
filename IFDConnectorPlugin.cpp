@@ -18,6 +18,10 @@
 
 using namespace std;
 
+#include <mutex>
+#define synchronized(m) \
+    for(std::unique_lock<std::recursive_mutex> lk(m); lk; lk.unlock())
+
 #if IBM
 	#include <windows.h>
 #endif
@@ -31,6 +35,7 @@ STARTUPINFO si;
 PROCESS_INFORMATION pi;
 LPSTR command;
 bool isRunning = false;
+std::recursive_mutex m_mutex;
 
 XPLMMenuID g_menu_id;
 XPLMCommandRef onCommand;
@@ -39,6 +44,7 @@ XPLMCommandRef offCommand;
 void menu_handler(void *, void *);
 int datarefSwitchHandler(XPLMCommandRef inCommand, XPLMCommandPhase inPhase, void* inRefcon);
 int offSwitchHandler(XPLMCommandRef inCommand, XPLMCommandPhase inPhase, void* inRefcon);
+void startProcess();
 void terminateProcess();
 
 PLUGIN_API int XPluginStart(
@@ -89,25 +95,15 @@ PLUGIN_API void XPluginDisable(void) { }
 PLUGIN_API int XPluginEnable(void) { return 1; }
 PLUGIN_API void XPluginReceiveMessage(XPLMPluginID inFrom, int inMsg, void * inParam) { }
 
-int datarefSwitchHandler(XPLMCommandRef inCommand, XPLMCommandPhase inPhase, void* inRefcon) {
+int datarefSwitchHandler(XPLMCommandRef inCommand, XPLMCommandPhase inPhase, void* inRefcon) 
+{
 	XPLMDebugString("Avionics ON command detected.\n");
-	if (!isRunning) {
-		isRunning = true;
-		if (!CreateProcess(NULL, command, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-			XPLMDebugString(fmt::format("Plugin Aviationics ON CreateProcess failed (%d).\n", GetLastError()).c_str());
-			terminateProcess();
-		}
-		else {
-			XPLMDebugString("CreateProcess SUCCESS \n");
-		}
-	}
-	else {
-		XPLMDebugString("Avionics IFD Connector may already be running. \n");
-	}
+	startProcess();
 	return 1;
 }
 
-int offSwitchHandler(XPLMCommandRef inCommand, XPLMCommandPhase inPhase, void* inRefcon) {
+int offSwitchHandler(XPLMCommandRef inCommand, XPLMCommandPhase inPhase, void* inRefcon) 
+{
 	XPLMDebugString("Avionics OFF command detected.\n");
 	terminateProcess();
 	return 1;
@@ -117,17 +113,27 @@ void menu_handler(void * in_menu_ref, void * in_item_ref)
 {
 	XPLMDebugString("Menu Launch command detected.\n");
 	terminateProcess();
-	isRunning = true;
-	if (!CreateProcess(NULL, command, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-		XPLMDebugString(fmt::format("Plugin Menu CreateProcess failed (%d).\n", GetLastError()).c_str());
-		terminateProcess();
-		return;
-	}
-	else {
-		XPLMDebugString("SUCCESS\n");
-	}
+	startProcess();
 }
 
+void startProcess() 
+{
+	synchronized(m_mutex) {
+		if (!isRunning) {
+			isRunning = true;
+			if (!CreateProcess(NULL, command, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+				XPLMDebugString(fmt::format("Plugin Aviationics CreateProcess failed (%d).\n", GetLastError()).c_str());
+				terminateProcess();
+			}
+			else {
+				XPLMDebugString("CreateProcess SUCCESS \n");
+			}
+		}
+		else {
+			XPLMDebugString("Avionics IFD Connector may already be running. \n");
+		}
+	}
+}
 
 void terminateProcess() {
 	CloseHandle(pi.hProcess);
